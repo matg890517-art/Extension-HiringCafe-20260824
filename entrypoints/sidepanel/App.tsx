@@ -22,10 +22,21 @@ type JobResult = {
   error?: string;
   title?: string;
   company?: string;
+  logo?: string;
+  companyLink?: string;
   location?: string;
   salary?: string;
+  employmentType?: string;
+  workplaceType?: string;
+  postedAgo?: string;
+  tags?: string[];
+  skills?: string[];
+  companyTags?: string[];
+  applicantsCount?: number;
+  applicantsText?: string;
   apply_url?: string;
   description?: string;
+  id?: string;
 };
 
 type PostingResult = {
@@ -45,24 +56,278 @@ function readDrawer(): JobResult {
   );
   if (!drawer) return { ok: false, error: 'no drawer' };
 
+  const absUrl = (raw: string, base?: string): string => {
+    if (!raw) return '';
+    try {
+      return new URL(raw, base || window.location.origin).href;
+    } catch {
+      return raw;
+    }
+  };
+
+  const norm = (el: Element | null | undefined): string =>
+    (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
   const title = drawer.querySelector('h1')?.textContent?.trim() ?? '';
-  const company = (drawer.querySelector('h1 + div span.text-xl.font-semibold')?.textContent ?? '')
-    .replace(/^@\s*/, '')
-    .trim();
-  const location =
+  const companyNameEl = drawer.querySelector('h1 + div span.text-xl.font-semibold');
+  const company = (companyNameEl?.textContent ?? '').replace(/^@\s*/, '').trim();
+
+  const headerRoot =
+    drawer.querySelector('[data-testid="drawer-header-bar"]') ??
+    drawer.querySelector('h1')?.parentElement ??
+    drawer;
+
+  let logo = '';
+  const considerImg = (img: Element) => {
+    if (logo) return;
+    if (!(img instanceof HTMLImageElement)) return;
+    const srcsetFirst = (img.getAttribute('srcset') || img.srcset || '')
+      .split(',')[0]
+      ?.trim()
+      .split(/\s+/)[0] ?? '';
+    const attrSrc = img.getAttribute('src') || img.src || '';
+    const raw = img.currentSrc || attrSrc || srcsetFirst;
+    if (!raw) return;
+    if (/^data:image\/svg/i.test(raw)) return;
+    if (raw.startsWith('data:') && raw.length < 400) return;
+    const w =
+      Number(img.getAttribute('width')) || img.width || img.naturalWidth || 0;
+    const h =
+      Number(img.getAttribute('height')) || img.height || img.naturalHeight || 0;
+    if ((w > 0 && w < 20) || (h > 0 && h < 20)) return;
+    const meta = `${img.className} ${img.alt ?? ''} ${raw}`;
+    if (/\b(icon|sprite|emoji)\b/i.test(meta) && !/logo/i.test(meta)) return;
+    logo = absUrl(raw);
+    if (!logo || logo === window.location.href) logo = absUrl(srcsetFirst);
+  };
+  for (const img of headerRoot.querySelectorAll('img')) considerImg(img);
+  if (!logo) {
+    for (const img of drawer.querySelectorAll('img')) considerImg(img);
+  }
+
+  let companyLink = '';
+  const orgA =
+    drawer.querySelector('a[href^="/org/"]') ??
+    companyNameEl?.closest('a') ??
+    companyNameEl?.parentElement?.querySelector('a[href^="/org/"]');
+  const orgHref = orgA?.getAttribute('href')?.trim() ?? '';
+  if (orgHref && !/^#|^javascript:|^mailto:/i.test(orgHref)) {
+    companyLink = absUrl(orgHref, 'https://hiringcafe.com');
+  }
+  for (const a of drawer.querySelectorAll('a[href]')) {
+    const href = a.getAttribute('href')?.trim() ?? '';
+    if (!href || href === '#' || /^(javascript:|mailto:)/i.test(href)) continue;
+    const text = norm(a);
+    if (/\bapply\b/i.test(text) || /\bapply\b/i.test(href)) continue;
+    const resolved = absUrl(href, 'https://hiringcafe.com');
+    if (/\/job\//i.test(resolved) || /\/ai-search/i.test(resolved)) continue;
+    if (/^https?:\/\//i.test(resolved) && !/hiringcafe\.com/i.test(resolved)) {
+      companyLink = resolved;
+      break;
+    }
+  }
+
+  let postedRaw =
+    drawer.querySelector('span.text-xs.text-cyan-700')?.textContent?.trim() ?? '';
+  if (!postedRaw) {
+    for (const el of drawer.querySelectorAll('span')) {
+      const t = norm(el);
+      if (/^Posted /i.test(t) && t.length < 48) {
+        postedRaw = t;
+        break;
+      }
+    }
+  }
+  const postedAgo = postedRaw.replace(/^posted\s+/i, '').trim();
+
+  let location =
     [...drawer.querySelectorAll('div.flex.space-x-2 span')]
-      .map((el) => el.textContent?.trim())
-      .find((t) => t && /United States|, |\bRemote\b|\bHybrid\b/.test(t)) ?? '';
-  const salary =
-    [...drawer.querySelectorAll('span, div')]
-      .map((el) => el.textContent?.trim())
-      .find((t) => t && /^\$[0-9]/.test(t) && t.length < 80) ?? '';
-  const href = drawer.querySelector('a[href^="/job/"]')?.getAttribute('href');
-  const apply_url = href ? new URL(href, 'https://hiringcafe.com').href : '';
+      .map((el) => el.textContent?.trim() ?? '')
+      .find(
+        (t) =>
+          Boolean(t) &&
+          /United States|, |\bRemote\b|\bHybrid\b/.test(t) &&
+          !/^(Onsite|Remote|Hybrid|Field)$/i.test(t),
+      ) ?? '';
+  if (!location) {
+    for (const row of drawer.querySelectorAll('div.flex.space-x-2')) {
+      if (!row.querySelector('svg')) continue;
+      const t =
+        [...row.querySelectorAll('span')]
+          .map((el) => el.textContent?.trim() ?? '')
+          .find(Boolean) ?? norm(row);
+      if (t && t.length < 120 && !/^(Onsite|Remote|Hybrid|Field)$/i.test(t)) {
+        location = t;
+        break;
+      }
+    }
+  }
+
+  const headerArea = drawer.querySelector('h1')?.parentElement ?? drawer;
+  const pickSalary = (root: ParentNode): string => {
+    for (const el of root.querySelectorAll('span, div, p, button')) {
+      if (el.closest('article.prose')) continue;
+      const t = norm(el);
+      if (t && /^\$/.test(t) && t.length < 80) return t;
+    }
+    return '';
+  };
+  const salary = pickSalary(headerArea) || pickSalary(drawer);
+
+  const WP_RE = /^(onsite|on-site|remote|hybrid|field)$/i;
+  const EMP_RE = /^(full[-\s]?time|part[-\s]?time|contract|intern(?:ship)?s?|temporary)$/i;
+  const normalizeWorkplace = (raw: string): string => {
+    if (/on-?site|in-?office/i.test(raw)) return 'Onsite';
+    if (/hybrid/i.test(raw)) return 'Hybrid';
+    if (/remote/i.test(raw)) return 'Remote';
+    if (/field/i.test(raw)) return 'Field';
+    return raw.trim();
+  };
+  const normalizeEmployment = (raw: string): string => {
+    if (/full[-\s]?time/i.test(raw)) return 'Full Time';
+    if (/part[-\s]?time/i.test(raw)) return 'Part Time';
+    if (/\binternships?\b/i.test(raw)) return 'Internship';
+    if (/\binterns?\b/i.test(raw)) return 'Intern';
+    if (/contract/i.test(raw)) return 'Contract';
+    if (/temporary/i.test(raw)) return 'Temporary';
+    return raw.trim();
+  };
+
+  let workplaceType = '';
+  let employmentType = '';
+  const scanWorkEmp = (root: ParentNode) => {
+    for (const el of root.querySelectorAll('span, div, p, button, li')) {
+      if (el.closest('article.prose')) continue;
+      const t = norm(el);
+      if (!t || t.length > 24) continue;
+      if (t === location) continue;
+      if (!workplaceType && WP_RE.test(t)) workplaceType = normalizeWorkplace(t);
+      if (!employmentType && EMP_RE.test(t)) employmentType = normalizeEmployment(t);
+    }
+  };
+  scanWorkEmp(headerArea);
+  if (!workplaceType || !employmentType) scanWorkEmp(drawer);
+
+  const fullView =
+    [...drawer.querySelectorAll('a[href^="/job/"]')].find((a) =>
+      /full view/i.test(a.textContent ?? ''),
+    ) ??
+    drawer.querySelector('[data-testid="drawer-view-job"] a[href^="/job/"]') ??
+    drawer.querySelector('a[href^="/job/"]');
+  const applyHref = fullView?.getAttribute('href')?.trim() ?? '';
+  const apply_url = applyHref ? absUrl(applyHref, 'https://hiringcafe.com') : '';
+  let id = '';
+  if (apply_url) {
+    try {
+      const segs = new URL(apply_url).pathname.split('/').filter(Boolean);
+      id = segs[segs.length - 1] ?? '';
+    } catch {
+      /* ignore */
+    }
+  }
+
   const description = drawer.querySelector('article.prose')?.textContent?.trim() ?? '';
 
-  return { ok: true, title, company, location, salary, apply_url, description };
+  const skills: string[] = [];
+  const pushSkill = (raw: string) => {
+    const t = raw.replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 80) return;
+    if (/technical tools|mentioned|^skills?$/i.test(t)) return;
+    if (!skills.includes(t)) skills.push(t);
+  };
+  for (const el of drawer.querySelectorAll('p, div, h2, h3, h4, span, strong, dt')) {
+    const t = norm(el);
+    if (!/technical tools/i.test(t) || t.length > 60) continue;
+    const sibling = el.nextElementSibling;
+    const scope = sibling ?? el.parentElement;
+    if (!scope) continue;
+    const listItems = scope.querySelectorAll('li');
+    if (listItems.length) {
+      for (const li of listItems) pushSkill(norm(li));
+    } else {
+      const chipLike = [
+        ...scope.querySelectorAll('span, a, button, div'),
+      ].filter((node) => node !== el);
+      let added = 0;
+      for (const chip of chipLike) {
+        const ct = norm(chip);
+        if (!ct || ct.length > 48) continue;
+        if (ct === t) continue;
+        pushSkill(ct);
+        added += 1;
+      }
+      if (!added) {
+        const blob = (sibling ? norm(sibling) : norm(scope)).replace(t, '').trim();
+        blob.split(/[,•|]/).forEach(pushSkill);
+      }
+    }
+    if (skills.length) break;
+  }
+  if (!skills.length) {
+    for (const el of drawer.querySelectorAll(
+      '[class*="chip"], [class*="skill"], [data-testid*="skill"]',
+    )) {
+      const t = norm(el);
+      if (t && t.length < 40) pushSkill(t);
+    }
+  }
+
+  const companyTags: string[] = [];
+  const companyBlock = companyNameEl?.parentElement ?? drawer.querySelector('h1 + div');
+  if (companyBlock) {
+    for (const el of companyBlock.querySelectorAll('span, a, button, div')) {
+      const t = norm(el);
+      if (!t || t.length > 40) continue;
+      if (t === company || t.replace(/^@\s*/, '') === company) continue;
+      if (/view all|website|jobs|apply|full view|posted|journal/i.test(t)) continue;
+      if (WP_RE.test(t) || EMP_RE.test(t) || /^\$/.test(t)) continue;
+      const cls = el.getAttribute('class') ?? '';
+      if (!/rounded|pill|chip|badge|tag/i.test(cls)) continue;
+      if (t.split(' ').length > 4) continue;
+      if (!companyTags.includes(t)) companyTags.push(t);
+    }
+  }
+
+  const tags: string[] = [];
+  const pushTag = (t: string) => {
+    if (t && !tags.includes(t)) tags.push(t);
+  };
+  pushTag(workplaceType);
+  pushTag(employmentType);
+
+  let applicantsCount: number | undefined;
+  let applicantsText: string | undefined;
+  for (const el of drawer.querySelectorAll('span, div, p, small, a, li')) {
+    const t = norm(el);
+    if (!t || t.length > 40) continue;
+    const m = t.match(/^(\d+)\s+applicants?$/i);
+    if (m) {
+      applicantsCount = Number(m[1]);
+      applicantsText = t;
+      break;
+    }
+  }
+
+  return {
+    ok: true,
+    title,
+    company,
+    logo,
+    companyLink,
+    location,
+    salary,
+    employmentType,
+    workplaceType,
+    postedAgo,
+    tags,
+    companyTags,
+    skills,
+    applicantsCount,
+    applicantsText,
+    apply_url,
+    description,
+    id,
+  };
 }
 
 function clickJobDescriptionTab() {
@@ -70,9 +335,10 @@ function clickJobDescriptionTab() {
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   );
   if (!drawer) return false;
-  const descTab = [...drawer.querySelectorAll('button')].find((b) =>
-    /job description/i.test(b.textContent ?? ''),
-  );
+  const descTab = [...drawer.querySelectorAll('button')].find((b) => {
+    const t = (b.textContent ?? '').trim();
+    return /job description/i.test(t) && !/\bapply\b/i.test(t);
+  });
   descTab?.click();
   return Boolean(descTab);
 }
@@ -86,7 +352,7 @@ function closeAndHide(title: string) {
 
   const hideBtn = [...(panel?.querySelectorAll('button') ?? [])].find((b) => {
     const t = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
-    return /\bhide\b/i.test(t);
+    return /\bhide\b/i.test(t) && !/\bapplied\b/i.test(t);
   });
   hideBtn?.click();
 
@@ -105,11 +371,12 @@ function closeAndHide(title: string) {
     });
     const hideOnCard = card
       ? [...card.querySelectorAll('button')].find((b) =>
-          /\bhide\b/i.test(`${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`),
+          /\bhide\b/i.test(`${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`) &&
+          !/\bapplied\b/i.test(`${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`),
         )
       : [...document.querySelectorAll('button')].find((b) => {
           const label = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
-          if (!/\bhide\b/i.test(label)) return false;
+          if (!/\bhide\b/i.test(label) || /\bapplied\b/i.test(label)) return false;
           const host = b.closest('[class]') as HTMLElement | null;
 
           return !!host && (host.textContent ?? '').includes(title);
@@ -156,6 +423,10 @@ export default function App() {
         func: readDrawer,
       });
       let extracted = injected?.result as JobResult | undefined;
+      if (injected?.error) {
+        setStatus(String(injected.error.message ?? injected.error));
+        return;
+      }
       if (!extracted?.ok) {
         setStatus(extracted?.error ?? 'failed');
         return;
@@ -190,22 +461,38 @@ export default function App() {
         }
       }
 
+      const payload: Record<string, unknown> = {
+        createdBy: 'hiringcafe',
+        title: extracted.title,
+        company: {
+          name: extracted.company,
+          logo: extracted.logo,
+          tags: extracted.companyTags ?? [],
+        },
+        description: extracted.description,
+        applyLink: extracted.apply_url,
+        companyLink: extracted.companyLink ?? '',
+        postedAgo: extracted.postedAgo,
+        tags: extracted.tags ?? [],
+        skills: extracted.skills ?? [],
+        details: {
+          location: extracted.location,
+          employmentType: extracted.employmentType ?? '',
+          workplaceType: extracted.workplaceType,
+          salary: extracted.salary,
+        },
+        applicants: {
+          count: extracted.applicantsCount,
+          text: extracted.applicantsText,
+        },
+        id: extracted.id,
+        scrapeFrom: 'hiringcafe',
+      };
+
       const res = await fetch(ingestUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          createdBy: 'hiringcafe',
-          title: extracted.title,
-          company: { name: extracted.company },
-          details: {
-            location: extracted.location,
-            salary: extracted.salary,
-          },
-          description: extracted.description,
-          applyLink: extracted.apply_url,
-          scrapefrom: 'hiringcafe',
-          collectedAt: new Date().toISOString(),
-        }),
+        body: JSON.stringify(payload),
       });
 
       const raw = await res.text();
@@ -291,16 +578,30 @@ export default function App() {
           {job?.ok && (
             <>
               <Divider />
+              {job.logo ? (
+                <Box
+                  component="img"
+                  src={job.logo}
+                  alt={job.company || ''}
+                  sx={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 1 }}
+                />
+              ) : null}
               <Typography variant="subtitle2">{job.title}</Typography>
               <Typography variant="body2">{job.company}</Typography>
               <Typography variant="body2">{job.location}</Typography>
               <Typography variant="body2">{job.salary}</Typography>
+              <Typography variant="body2">{job.employmentType}</Typography>
+              <Typography variant="body2">{job.workplaceType}</Typography>
+              <Typography variant="body2">{job.postedAgo}</Typography>
+              <Typography variant="body2">{(job.tags ?? []).join(', ')}</Typography>
+              <Typography variant="body2">{(job.companyTags ?? []).join(', ')}</Typography>
+              <Typography variant="body2">{(job.skills ?? []).join(', ')}</Typography>
               <Typography variant="caption" sx={{ wordBreak: 'break-all' }}>
                 {job.apply_url}
               </Typography>
               {(!job.apply_url || !job.description) && (
                 <Alert severity="warning">
-                  Missing {!job.apply_url ? "Full View URL" : ""}{!job.apply_url && !job.description ? " and " : ""}{!job.description ? "description" : ""}. Posted anyway.
+                  Missing {!job.apply_url ? "applyLink" : ""}{!job.apply_url && !job.description ? " and " : ""}{!job.description ? "description" : ""}. Posted anyway.
                 </Alert>
               )}
             </>
