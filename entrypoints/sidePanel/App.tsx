@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   CssBaseline,
   Divider,
+  Paper,
   Stack,
   ThemeProvider,
   Typography,
@@ -23,6 +25,13 @@ type JobResult = {
   salary?: string;
   apply_url?: string;
   description?: string;
+};
+
+type PostingResult = {
+  ok: boolean;
+  status: number;
+  url: string;
+  body: string;
 };
 
 const INGEST_URL =
@@ -104,10 +113,12 @@ function closeAndHide(title: string) {
 export default function App() {
   const [status, setStatus] = useState('Open a job on HiringCafe, then Get job');
   const [job, setJob] = useState<JobResult | null>(null);
+  const [posting, setPosting] = useState<PostingResult | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function getJob() {
     setBusy(true);
+    setPosting(null);
     try {
       const tabs = await browser.tabs.query({
         url: ['*://hiringcafe.com/*', '*://*.hiringcafe.com/*'],
@@ -147,6 +158,19 @@ export default function App() {
         }),
       });
 
+      const raw = await res.text();
+      let body = raw;
+      try {
+        body = JSON.stringify(JSON.parse(raw), null, 2);
+      } catch {
+        /* keep raw text */
+      }
+      setPosting({
+        ok: res.ok,
+        status: res.status,
+        url: INGEST_URL,
+        body: body || "(empty body)",
+      });
       if (!res.ok) {
         setStatus(`ingest failed ${res.status}`);
         return;
@@ -160,6 +184,13 @@ export default function App() {
 
       setStatus(`ingested ${extracted.title}`);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setPosting({
+        ok: false,
+        status: 0,
+        url: INGEST_URL,
+        body: message,
+      });
       setStatus(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
@@ -178,6 +209,27 @@ export default function App() {
           <Typography variant="body2" color="text.secondary">
             {status}
           </Typography>
+          {posting && (
+            <>
+              <Divider />
+              <Typography variant="subtitle2">Posting result</Typography>
+              <Alert severity={posting.ok ? "success" : "error"}>
+                {posting.ok ? "Posted" : "Post failed"} · HTTP {posting.status}
+              </Alert>
+              <Typography variant="caption" sx={{ wordBreak: "break-all" }}>
+                {posting.url}
+              </Typography>
+              <Paper variant="outlined" sx={{ p: 1, maxHeight: 220, overflow: "auto" }}>
+                <Typography
+                  component="pre"
+                  variant="caption"
+                  sx={{ m: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                >
+                  {posting.body}
+                </Typography>
+              </Paper>
+            </>
+          )}
           {job?.ok && (
             <>
               <Divider />
