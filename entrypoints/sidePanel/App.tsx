@@ -1,131 +1,197 @@
 import { useState } from 'react';
-import reactLogo from '@/assets/react.svg';
-import wxtLogo from '/wxt.svg';
-import './App.css';
-import { Description } from '@mui/icons-material';
+import {
+  Box,
+  Button,
+  CssBaseline,
+  Divider,
+  Stack,
+  ThemeProvider,
+  Typography,
+  createTheme,
+} from '@mui/material';
 
-function App() {
-  const [count, setCount] = useState(0);
-  const [status, setStatus] = useState('Open a job, then Get job');
-  
-  const [desc, setDesc] = useState<Record<string,any>>();
-  // async function getJob() {
+const theme = createTheme({
+  palette: { mode: 'light' },
+});
 
-  //   console.log("[getJob]")
-  //   // const [tab] = await browser.tabs.query({
-  //   //   active: true,
-  //   //   currentWindow: true,
-  //   // });
-  //   const tabs = await browser.tabs.query({
-  //     url: ['*://hiringcafe.com/*', '*://*.hiringcafe.com/*'],
-  //   });
-  //   const tab = tabs.find((t) => t.active) ?? tabs[0];
-  //   if (!tab?.id) {
-  //     setStatus('no-------------hiringcafe tab');
-  //     return;
-  //   }else{
-  //     setStatus('tab-------------id:'+tab?.url);
-  //   }
-  //   const res = await browser.tabs.sendMessage(tab.id, { type: 'GET_JOB' });
-  //   if(res.ok)setStatus(res.ok);  }
+type JobResult = {
+  ok: boolean;
+  error?: string;
+  title?: string;
+  company?: string;
+  location?: string;
+  salary?: string;
+  apply_url?: string;
+  description?: string;
+};
+
+const INGEST_URL =
+  (import.meta.env.WXT_INGEST_URL as string | undefined)?.replace(/^['"]|['"]$/g, '') ??
+  'http://127.0.0.1:8980/api/jobs/ingest';
+
+function readDrawer(): JobResult {
+  const drawer = document.querySelector(
+    'div[role="dialog"][aria-modal="true"].chakra-modal__content',
+  );
+  if (!drawer) return { ok: false, error: 'no drawer' };
+
+  const descTab = [...drawer.querySelectorAll('button')].find((b) =>
+    /job description/i.test(b.textContent ?? ''),
+  );
+  if (descTab && !drawer.querySelector('article.prose')?.textContent?.trim()) {
+    descTab.click();
+  }
+
+  const title = drawer.querySelector('h1')?.textContent?.trim() ?? '';
+  const company = (drawer.querySelector('h1 + div span.text-xl.font-semibold')?.textContent ?? '')
+    .replace(/^@\s*/, '')
+    .trim();
+  const location =
+    [...drawer.querySelectorAll('div.flex.space-x-2 span')]
+      .map((el) => el.textContent?.trim())
+      .find((t) => t && /United States|, /.test(t)) ?? '';
+  const salary =
+    [...drawer.querySelectorAll('span, div')]
+      .map((el) => el.textContent?.trim())
+      .find((t) => t && /^\$/.test(t)) ?? '';
+  const href = drawer.querySelector('a[href^="/job/"]')?.getAttribute('href');
+  const apply_url = href ? new URL(href, 'https://hiringcafe.com').href : '';
+  const description = drawer.querySelector('article.prose')?.textContent?.trim() ?? '';
+
+  return { ok: true, title, company, location, salary, apply_url, description };
+}
+
+function closeAndHide(title: string) {
+  const drawer = document.querySelector(
+    'div[role="dialog"][aria-modal="true"].chakra-modal__content',
+  ) as HTMLElement | null;
+
+  const hideBtn = [...(drawer?.querySelectorAll('button') ?? [])].find((b) => {
+    const t = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
+    return /\bhide\b/i.test(t);
+  });
+  hideBtn?.click();
+
+  const closeBtn =
+    (document.querySelector('[data-testid="drawer-header-close"]') as HTMLElement | null) ??
+    ([...(drawer?.querySelectorAll('button') ?? [])].find((b) =>
+      /close/i.test(b.getAttribute('aria-label') ?? ''),
+    ) as HTMLElement | undefined) ??
+    null;
+  closeBtn?.click();
+
+  if (title) {
+    const card = [...document.querySelectorAll('button, a, div')].find((el) => {
+      const text = el.textContent ?? '';
+      return text.includes(title) && /\bhide\b/i.test(text);
+    });
+    const hideOnCard = card
+      ? [...card.querySelectorAll('button')].find((b) =>
+          /\bhide\b/i.test(`${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`),
+        )
+      : [...document.querySelectorAll('button')].find((b) => {
+          const label = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
+          if (!/\bhide\b/i.test(label)) return false;
+          const host = b.closest('[class]') as HTMLElement | null;
+          return !!host && (host.textContent ?? '').includes(title);
+        });
+    hideOnCard?.click();
+  }
+
+  return { closed: true };
+}
+
+export default function App() {
+  const [status, setStatus] = useState('Open a job on HiringCafe, then Get job');
+  const [job, setJob] = useState<JobResult | null>(null);
+  const [busy, setBusy] = useState(false);
 
   async function getJob() {
-    const tabs = await browser.tabs.query({
-      url: ['*://hiringcafe.com/*', '*://*.hiringcafe.com/*'],
-    });
-    const tab = tabs.find((t) => t.active) ?? tabs[0];
-    if (!tab?.id) {
-      setStatus('no hiringcafe tab');
-      return;
-    }
-    const [injected] = await browser.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => {
-        const drawer = document.querySelector(
-          'div[role="dialog"][aria-modal="true"].chakra-modal__content',
-        );
-        if(!drawer) return { ok: false, error: 'no drawer' };
+    setBusy(true);
+    try {
+      const tabs = await browser.tabs.query({
+        url: ['*://hiringcafe.com/*', '*://*.hiringcafe.com/*'],
+      });
+      const tab = tabs.find((t) => t.active) ?? tabs[0];
+      if (!tab?.id) {
+        setStatus('no hiringcafe tab');
+        return;
+      }
 
-        const title = drawer.querySelector('h1')?.textContent?.trim() ?? '';
-        const company = (drawer.querySelector('h1 + div span.text-xl.font-semibold')
-          ?.textContent ?? '')
-          .replace(/^@\s*/, '')
-          .trim();
-        const location =
-          [...drawer.querySelectorAll('div.flex.space-x-2 span')]
-            .map((el) => el.textContent?.trim())
-            .find((t) => t && /United States|, /.test(t)) ?? '';
-        const salary =
-          [...drawer.querySelectorAll('span, div')]
-            .map((el) => el.textContent?.trim())
-            .find((t) => t && /^\$/.test(t)) ?? '';
-        const href = drawer.querySelector('a[href^="/job/"]')?.getAttribute('href');
-        const apply_url = href ? new URL(href, 'https://hiringcafe.com').href : '';
-        const description = drawer.querySelector('article.prose')?.textContent?.trim() ?? '';
-        return { ok: true, title, company, location, salary, apply_url, description };
-      },
-    });
-    const job = injected?.result;
-    if (!job?.ok) {
-      setStatus(job?.error ?? 'failed');
-      return;
-    }
-    const ingestUrl =
-      import.meta.env.WXT_INGEST_URL ?? 'http://127.0.0.1:8980/api/jobs/ingest';
-      const res = await fetch(ingestUrl, {
+      const [injected] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: readDrawer,
+      });
+      const extracted = injected?.result as JobResult | undefined;
+      if (!extracted?.ok) {
+        setStatus(extracted?.error ?? 'failed');
+        return;
+      }
+      setJob(extracted);
+
+      const res = await fetch(INGEST_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           createdBy: 'hiringcafe',
-          title: job.title,
-          company: { name: job.company },
-
+          title: extracted.title,
+          company: { name: extracted.company },
           details: {
-            location: job.location, salary: job.salary,
+            location: extracted.location,
+            salary: extracted.salary,
           },
-          
-          description: job.description,
-          applyLink: job.apply_url,
+          description: extracted.description,
+          applyLink: extracted.apply_url,
           scrapefrom: 'hiringcafe',
           collectedAt: new Date().toISOString(),
         }),
       });
-    setStatus(res.ok ? `ingested ${job.title}` : `ingest failed ${res.status}`);
-    setDesc(injected?.result);
+
+      if (!res.ok) {
+        setStatus(`ingest failed ${res.status}`);
+        return;
+      }
+
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: closeAndHide,
+        args: [extracted.title ?? ''],
+      });
+
+      setStatus(`ingested ${extracted.title}`);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   }
+
   return (
-    <>
-      <div>
-        <a href="https://wxt.dev" target="_blank">
-          <img src={wxtLogo} className="logo" alt="WXT logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>WXT + React</h1>
-      <div className="card">
-        <button onClick={() =>{ setCount((count) => count + 1)}}>
-          count is {count}
-        </button>
-        
-        <button onClick={getJob}>
-          status is {status}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        title------------ {desc?.title ?? 'unknown'}<br/>
-        company------------ {desc?.company ?? 'unknown'}<br/>
-        location------------ {desc?.location ?? 'unknown'}<br/>
-        salary------------ {desc?.salary ?? 'unknown'}<br/>
-        applly_url------------ {desc?.apply_url ?? 'unknown'}<br/>
-        descriptoin------------ {desc?.description ?? 'unknown'};<br/>
-      </p>
-    </>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <Box sx={{ p: 2, width: 360 }}>
+        <Stack spacing={2}>
+          <Typography variant="h6">HiringCafe collector</Typography>
+          <Button variant="contained" onClick={getJob} disabled={busy} fullWidth>
+            {busy ? 'Working…' : 'Get job'}
+          </Button>
+          <Typography variant="body2" color="text.secondary">
+            {status}
+          </Typography>
+          {job?.ok && (
+            <>
+              <Divider />
+              <Typography variant="subtitle2">{job.title}</Typography>
+              <Typography variant="body2">{job.company}</Typography>
+              <Typography variant="body2">{job.location}</Typography>
+              <Typography variant="body2">{job.salary}</Typography>
+              <Typography variant="caption" sx={{ wordBreak: 'break-all' }}>
+                {job.apply_url}
+              </Typography>
+            </>
+          )}
+        </Stack>
+      </Box>
+    </ThemeProvider>
   );
 }
-
-export default App;
