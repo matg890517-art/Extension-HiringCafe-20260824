@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -6,6 +6,7 @@ import {
   CssBaseline,
   Divider,
   Paper,
+  TextField,
   Stack,
   ThemeProvider,
   Typography,
@@ -44,12 +45,6 @@ function readDrawer(): JobResult {
   );
   if (!drawer) return { ok: false, error: 'no drawer' };
 
-  const descTab = [...drawer.querySelectorAll('button')].find((b) =>
-    /job description/i.test(b.textContent ?? ''),
-  );
-  if (descTab && !drawer.querySelector('article.prose')?.textContent?.trim()) {
-    descTab.click();
-  }
 
   const title = drawer.querySelector('h1')?.textContent?.trim() ?? '';
   const company = (drawer.querySelector('h1 + div span.text-xl.font-semibold')?.textContent ?? '')
@@ -58,11 +53,11 @@ function readDrawer(): JobResult {
   const location =
     [...drawer.querySelectorAll('div.flex.space-x-2 span')]
       .map((el) => el.textContent?.trim())
-      .find((t) => t && /United States|, /.test(t)) ?? '';
+      .find((t) => t && /United States|, |\bRemote\b|\bHybrid\b/.test(t)) ?? '';
   const salary =
     [...drawer.querySelectorAll('span, div')]
       .map((el) => el.textContent?.trim())
-      .find((t) => t && /^\$/.test(t)) ?? '';
+      .find((t) => t && /^\$[0-9]/.test(t) && t.length < 80) ?? '';
   const href = drawer.querySelector('a[href^="/job/"]')?.getAttribute('href');
   const apply_url = href ? new URL(href, 'https://hiringcafe.com').href : '';
   const description = drawer.querySelector('article.prose')?.textContent?.trim() ?? '';
@@ -70,12 +65,26 @@ function readDrawer(): JobResult {
   return { ok: true, title, company, location, salary, apply_url, description };
 }
 
+function clickJobDescriptionTab() {
+  const drawer = document.querySelector(
+    'div[role="dialog"][aria-modal="true"].chakra-modal__content',
+  );
+  if (!drawer) return false;
+  const descTab = [...drawer.querySelectorAll('button')].find((b) =>
+    /job description/i.test(b.textContent ?? ''),
+  );
+  descTab?.click();
+  return Boolean(descTab);
+}
+
 function closeAndHide(title: string) {
   const drawer = document.querySelector(
     'div[role="dialog"][aria-modal="true"].chakra-modal__content',
   ) as HTMLElement | null;
 
-  const hideBtn = [...(drawer?.querySelectorAll('button') ?? [])].find((b) => {
+  const panel = drawer?.querySelector('[data-testid="job-actions-panel"]') ?? drawer;
+
+  const hideBtn = [...(panel?.querySelectorAll('button') ?? [])].find((b) => {
     const t = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
     return /\bhide\b/i.test(t);
   });
@@ -102,6 +111,7 @@ function closeAndHide(title: string) {
           const label = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
           if (!/\bhide\b/i.test(label)) return false;
           const host = b.closest('[class]') as HTMLElement | null;
+
           return !!host && (host.textContent ?? '').includes(title);
         });
     hideOnCard?.click();
@@ -115,6 +125,18 @@ export default function App() {
   const [job, setJob] = useState<JobResult | null>(null);
   const [posting, setPosting] = useState<PostingResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ingestUrl, setIngestUrl] = useState(INGEST_URL);
+
+  useEffect(() => {
+    browser.storage.local.get('ingestUrl').then((stored) => {
+      const value = stored.ingestUrl;
+      if (typeof value === 'string' && value.trim()) setIngestUrl(value.trim());
+    });
+  }, []);
+
+  useEffect(() => {
+    if (ingestUrl) browser.storage.local.set({ ingestUrl });
+  }, [ingestUrl]);
 
   async function getJob() {
     setBusy(true);
@@ -133,14 +155,42 @@ export default function App() {
         target: { tabId: tab.id },
         func: readDrawer,
       });
-      const extracted = injected?.result as JobResult | undefined;
+      let extracted = injected?.result as JobResult | undefined;
       if (!extracted?.ok) {
         setStatus(extracted?.error ?? 'failed');
         return;
       }
       setJob(extracted);
 
-      const res = await fetch(INGEST_URL, {
+      if (!extracted.description) {
+        setStatus('opening Job Description tab');
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: clickJobDescriptionTab,
+        });
+        await new Promise((r) => setTimeout(r, 450));
+        const [again] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: readDrawer,
+        });
+        if (again?.result?.ok) {
+          extracted = again.result as JobResult;
+          setJob(extracted);
+        }
+      }
+      if (extracted && !extracted.description) {
+        await new Promise((r) => setTimeout(r, 450));
+        const [third] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: readDrawer,
+        });
+        if (third?.result?.ok) {
+          extracted = third.result as JobResult;
+          setJob(extracted);
+        }
+      }
+
+      const res = await fetch(ingestUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -168,7 +218,7 @@ export default function App() {
       setPosting({
         ok: res.ok,
         status: res.status,
-        url: INGEST_URL,
+        url: ingestUrl,
         body: body || "(empty body)",
       });
       if (!res.ok) {
@@ -188,7 +238,7 @@ export default function App() {
       setPosting({
         ok: false,
         status: 0,
-        url: INGEST_URL,
+        url: ingestUrl,
         body: message,
       });
       setStatus(err instanceof Error ? err.message : String(err));
@@ -206,6 +256,14 @@ export default function App() {
           <Button variant="contained" onClick={getJob} disabled={busy} fullWidth>
             {busy ? 'Working…' : 'Get job'}
           </Button>
+          <TextField
+            label="Ingest URL"
+            size="small"
+            fullWidth
+            value={ingestUrl}
+            onChange={(e) => setIngestUrl(e.target.value)}
+            disabled={busy}
+          />
           <Typography variant="body2" color="text.secondary">
             {status}
           </Typography>
@@ -240,6 +298,11 @@ export default function App() {
               <Typography variant="caption" sx={{ wordBreak: 'break-all' }}>
                 {job.apply_url}
               </Typography>
+              {(!job.apply_url || !job.description) && (
+                <Alert severity="warning">
+                  Missing {!job.apply_url ? "Full View URL" : ""}{!job.apply_url && !job.description ? " and " : ""}{!job.description ? "description" : ""}. Posted anyway.
+                </Alert>
+              )}
             </>
           )}
         </Stack>

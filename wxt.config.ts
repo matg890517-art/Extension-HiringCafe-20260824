@@ -9,6 +9,7 @@ export default defineConfig({
       '*://hiringcafe.com/*',
       '*://*.hiringcafe.com/*',
       'http://127.0.0.1:8980/*',
+      'http://localhost:8980/*',
     ],
   },
 });
