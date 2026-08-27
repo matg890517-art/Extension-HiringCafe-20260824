@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   CssBaseline,
@@ -11,11 +10,11 @@ import {
   ThemeProvider,
   Typography,
   createTheme,
-  Snackbar,
 } from '@mui/material';
 
 import theme from './theme'
 import { ModeToggle } from './ModeToggle';
+import { addAlert, AlertHost } from './addAlert'
 import readDrawer, { type JobResult} from './readDrawer';
 
 type PostingResult = {
@@ -58,6 +57,7 @@ export default function App() {
       const tab = tabs.find((t) => t.active) ?? tabs[0];
       if (!tab?.id) {
         setStatus('no hiringcafe tab');
+        addAlert({ message: 'no hiringcafe tab', security: 'error' });
         return;
       }
 
@@ -67,11 +67,15 @@ export default function App() {
       });
       const extracted = injected?.result as JobResult | undefined;
       if (injected?.error) {
-        setStatus(String(injected.error.message ?? injected.error));
+        const message = String(injected.error.message ?? injected.error);
+        setStatus(message);
+        addAlert({ message, security: 'error' });
         return;
       }
       if (!extracted?.ok) {
-        setStatus(extracted?.error ?? 'failed');
+        const message = extracted?.error ?? 'failed';
+        setStatus(message);
+        addAlert({ message, security: 'error' });
         return;
       }
       setJob(extracted);
@@ -125,10 +129,12 @@ export default function App() {
       });
       if (!res.ok) {
         setStatus(`ingest failed ${res.status}`);
+        addAlert({ message: `ingest failed ${res.status}`, security: 'error' });
         return;
       }
 
       setStatus(`ingested ${extracted.title}`);
+      addAlert({ message: `ingested ${extracted.title}`, security: 'success' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setPosting({
@@ -137,7 +143,8 @@ export default function App() {
         url: ingestUrl,
         body: message,
       });
-      setStatus(err instanceof Error ? err.message : String(err));
+      setStatus(message);
+      addAlert({ message, security: 'error' });
     } finally {
       setBusy(false);
     }
@@ -146,6 +153,7 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <AlertHost />
       <Box 
         sx={{ 
           display: 'flex',
