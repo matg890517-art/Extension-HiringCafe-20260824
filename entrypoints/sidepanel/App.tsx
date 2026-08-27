@@ -483,50 +483,6 @@ function clickJobDescriptionTab() {
   return Boolean(descTab);
 }
 
-function closeAndHide(title: string) {
-  const drawer = document.querySelector(
-    'div[role="dialog"][aria-modal="true"].chakra-modal__content',
-  ) as HTMLElement | null;
-
-  const panel = drawer?.querySelector('[data-testid="job-actions-panel"]') ?? drawer;
-
-  const hideBtn = [...(panel?.querySelectorAll('button') ?? [])].find((b) => {
-    const t = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
-    return /\bhide\b/i.test(t) && !/\bapplied\b/i.test(t);
-  });
-  hideBtn?.click();
-
-  const closeBtn =
-    (document.querySelector('[data-testid="drawer-header-close"]') as HTMLElement | null) ??
-    ([...(drawer?.querySelectorAll('button') ?? [])].find((b) =>
-      /close/i.test(b.getAttribute('aria-label') ?? ''),
-    ) as HTMLElement | undefined) ??
-    null;
-  closeBtn?.click();
-
-  if (title) {
-    const card = [...document.querySelectorAll('button, a, div')].find((el) => {
-      const text = el.textContent ?? '';
-      return text.includes(title) && /\bhide\b/i.test(text);
-    });
-    const hideOnCard = card
-      ? [...card.querySelectorAll('button')].find((b) =>
-          /\bhide\b/i.test(`${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`) &&
-          !/\bapplied\b/i.test(`${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`),
-        )
-      : [...document.querySelectorAll('button')].find((b) => {
-          const label = `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''}`;
-          if (!/\bhide\b/i.test(label) || /\bapplied\b/i.test(label)) return false;
-          const host = b.closest('[class]') as HTMLElement | null;
-
-          return !!host && (host.textContent ?? '').includes(title);
-        });
-    hideOnCard?.click();
-  }
-
-  return { closed: true };
-}
-
 export default function App() {
   const [status, setStatus] = useState('Open a job on HiringCafe, then Get job');
   const [job, setJob] = useState<JobResult | null>(null);
@@ -652,12 +608,6 @@ export default function App() {
         setStatus(`ingest failed ${res.status}`);
         return;
       }
-
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: closeAndHide,
-        args: [extracted.title ?? ''],
-      });
 
       setStatus(`ingested ${extracted.title}`);
     } catch (err) {
