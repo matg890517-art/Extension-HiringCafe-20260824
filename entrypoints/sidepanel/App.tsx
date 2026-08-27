@@ -75,23 +75,21 @@ export default function App() {
         addAlert({ message, security: 'error' });
         return "This page is not Hiringcafe page";
       }
+      const first = await readJob(tab.id);
+      if (!first?.ok) {
+        const message = first?.error ?? 'failed';
+        setStatus(message);
+        addAlert({ message, security: 'error' });
+        return;
+      }
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: clickTab,
         args: ['Company Info'],
       });
       await new Promise((r) => setTimeout(r, 450));
-      const [injected] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: readDrawer,
-      });
-      const extracted = injected?.result as JobResult | undefined;
-      if (injected?.error) {
-        const message = String(injected.error.message ?? injected.error);
-        setStatus(message);
-        addAlert({ message, security: 'error' });
-        return;
-      }
+      const second = await readJob(tab.id);
+      const extracted = second?.ok ? mergeJob(first, second) : first;
       if (!extracted?.ok) {
         const message = extracted?.error ?? 'failed';
         setStatus(message);
@@ -231,25 +229,33 @@ export default function App() {
     </ThemeProvider>
   );
 }
-interface JobFieldProps {
-  fill: string;
-  text: string;
-  desc: string;
+
+function filled(value: unknown) {
+  if (value == null) return false;
+  if (typeof value === 'number') return true;
+  if (Array.isArray(value)) return value.length > 0;
+  return String(value).trim() !== '';
 }
 
-function JobField({ fill,  text, desc }: JobFieldProps) {
-  return (
-    <ListItem disablePadding>
-      <ListItemIcon>
-        {fill==='exist'&&
-          <CheckCircle color="success" />
-        }
-        {fill==='zero'&&
-          <RadioButtonUnchecked color="disabled" />
-        }
-      </ListItemIcon>
+function mergeJob(first: JobResult, second: JobResult): JobResult {
+  const merged = { ...first };
+  (Object.keys(second) as (keyof JobResult)[]).forEach((key) => {
+    if (key === 'ok' || key === 'error') return;
+    if (filled(second[key])) {
+      (merged as Record<string, unknown>)[key] = second[key];
+    }
+  });
+  merged.ok = true;
+  return merged;
+}
 
-      <ListItemText primary={text} secondary={desc} />
-    </ListItem>
-  );
+async function readJob(tabId: number) {
+  const [injected] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: readDrawer,
+  });
+  if (injected?.error) {
+    throw new Error(String(injected.error.message ?? injected.error));
+  }
+  return injected?.result as JobResult | undefined;
 }
