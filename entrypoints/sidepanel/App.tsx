@@ -24,11 +24,8 @@ import readDrawer, { type JobResult} from './readDrawer';
 import { server_status,  server_status_color } from './content'
 import { getTab } from './getTab';
 import { postJob } from './postJob';
-type PostingResult = {
-  ok: boolean;
-  status: number;
-  body: any;
-};
+import { JobFields } from './JobField';
+
 
 const SERVER_URL =
   (import.meta.env.WXT_SERVER_URL as string | undefined)?.replace(/^['"]|['"]$/g, '') ??
@@ -41,7 +38,6 @@ const HEALTH_TAG = (import.meta.env.HEALTH_TAG as string | undefined)?.replace(/
 export default function App() {
   const [status, setStatus] = useState('Open a job on HiringCafe, then Get job');
   const [job, setJob] = useState<JobResult | null>(null);
-  const [posting, setPosting] = useState<PostingResult | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [serverUrl, setServerUrl] = useState(SERVER_URL);
@@ -69,7 +65,6 @@ export default function App() {
 
   async function getJob() {
     setBusy(true);
-    setPosting(null);
     try {
       const tab = await getTab();
       const tabUrl = tab?.url ?? "";
@@ -100,30 +95,31 @@ export default function App() {
       const res = await postJob(serverUrl + INGEST_TAG, extracted);
       const result = await res.json();
       console.log(result);
-      // try {
-      //   body = JSON.stringify(JSON.parse(raw), null, 2);
-      // } catch {
-      //   /* keep raw text */
-      // }
-      setPosting({
-        ok: true,
-        status:2,
-        body: result.success || "(empty body)",
-      });
-      // if (!res.ok) {
-      //   setStatus(`ingest failed ${res.status}`);
-      //   addAlert({ message: `ingest failed ${res.status}`, security: 'error' });
-      //   return;
-      // }
-      setStatus(`ingested ${extracted.title}`);
-      addAlert({ message: `ingested ${extracted.title}`, security: 'success' });
+      let message = '';
+      switch(result.summary.total){
+          case result.summary.created: 
+            message = 'Post and created';
+            addAlert({ message: message, security: 'success' });
+          break;
+          case result.summary.duplicate: 
+            message = 'Already it is in backend. more:' +result.results[0].reason;
+            addAlert({ message: message, security: 'warning' });
+          break;
+          case result.summary.blocked: 
+            message = 'Job blocked';
+            addAlert({ message: message, security: 'error' });
+          break;
+          case result.summary.errors: 
+            message = 'Job is not good.';
+            addAlert({ message: message, security: 'error' });
+          break;
+          default:
+            message = 'Unknown case';
+            addAlert({ message: message, security: 'error' });
+      }
+      setStatus(message);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setPosting({
-        ok: false,
-        status: 0,
-        body: message,
-      });
       setStatus(message);
       addAlert({ message, security: 'error' });
     } finally {
@@ -167,21 +163,18 @@ export default function App() {
           <Typography variant="body2" color="text.secondary">
             {status}
           </Typography>
-          {job?.logo ? (
+          {/* {job?.logo ? (
                 <Box
                   component="img"
                   src={job.logo}
                   alt={job.company || ''}
                   sx={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 1 }}
                 />
-              ) : null}
-          {posting && (
+              ) : null} */}
+          {/* {posting && (
             <>
               <Divider />
               <Typography variant="subtitle2">Posting result</Typography>
-              <Alert severity={posting.ok ? "success" : "error"}>
-                {posting.ok ? "Posted" : "Post failed"} · HTTP {posting.status}
-              </Alert>
               <Paper variant="outlined" sx={{ p: 1, maxHeight: 220, overflow: "auto" }}>
                 <Typography
                   component="pre"
@@ -192,11 +185,9 @@ export default function App() {
                 </Typography>
               </Paper>
             </>
-          )}
+          )} */}
           <Divider />
-          <List dense>
-              <JobField fill={'zero'} text={'text'} desc={'ses'} />
-          </List>
+            <JobFields job={job} />
           {/* {job?.ok && (
             <>
               <Divider />
