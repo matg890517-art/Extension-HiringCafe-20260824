@@ -25,6 +25,7 @@ import { server_status,  server_status_color } from './content'
 import { getTab } from './getTab';
 import { postJob } from './postJob';
 import { JobFields } from './JobField';
+import { clickTab } from './clickTab';
 
 
 const SERVER_URL =
@@ -74,6 +75,12 @@ export default function App() {
         addAlert({ message, security: 'error' });
         return "This page is not Hiringcafe page";
       }
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: clickTab,
+        args: ['Company Info'],
+      });
+      await new Promise((r) => setTimeout(r, 450));
       const [injected] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: readDrawer,
