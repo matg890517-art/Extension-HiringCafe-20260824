@@ -470,19 +470,6 @@ function readDrawer(): JobResult {
   };
 }
 
-function clickJobDescriptionTab() {
-  const drawer = document.querySelector(
-    'div[role="dialog"][aria-modal="true"].chakra-modal__content',
-  );
-  if (!drawer) return false;
-  const descTab = [...drawer.querySelectorAll('button')].find((b) => {
-    const t = (b.textContent ?? '').trim();
-    return /job description/i.test(t) && !/\bapply\b/i.test(t);
-  });
-  descTab?.click();
-  return Boolean(descTab);
-}
-
 export default function App() {
   const [status, setStatus] = useState('Open a job on HiringCafe, then Get job');
   const [job, setJob] = useState<JobResult | null>(null);
@@ -518,7 +505,7 @@ export default function App() {
         target: { tabId: tab.id },
         func: readDrawer,
       });
-      let extracted = injected?.result as JobResult | undefined;
+      const extracted = injected?.result as JobResult | undefined;
       if (injected?.error) {
         setStatus(String(injected.error.message ?? injected.error));
         return;
@@ -528,34 +515,6 @@ export default function App() {
         return;
       }
       setJob(extracted);
-
-      if (!extracted.description) {
-        setStatus('opening Job Description tab');
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: clickJobDescriptionTab,
-        });
-        await new Promise((r) => setTimeout(r, 450));
-        const [again] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: readDrawer,
-        });
-        if (again?.result?.ok) {
-          extracted = again.result as JobResult;
-          setJob(extracted);
-        }
-      }
-      if (extracted && !extracted.description) {
-        await new Promise((r) => setTimeout(r, 450));
-        const [third] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: readDrawer,
-        });
-        if (third?.result?.ok) {
-          extracted = third.result as JobResult;
-          setJob(extracted);
-        }
-      }
 
       const payload: Record<string, unknown> = {
         createdBy: 'hiringcafe',
