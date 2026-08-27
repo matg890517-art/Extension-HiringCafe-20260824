@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   CssBaseline,
@@ -10,57 +11,74 @@ import {
   ThemeProvider,
   Typography,
   createTheme,
+  List , ListItem , ListItemIcon , ListItemText
 } from '@mui/material';
+
+import { CheckCircle, RadioButtonUnchecked  } from '@mui/icons-material';
 
 import theme from './theme'
 import { ModeToggle } from './ModeToggle';
 import { addAlert, AlertHost } from './addAlert'
 import readDrawer, { type JobResult} from './readDrawer';
 
+import { server_status,  server_status_color } from './content'
+import { getTab } from './getTab';
+import { postJob } from './postJob';
 type PostingResult = {
   ok: boolean;
   status: number;
-  url: string;
-  body: string;
+  body: any;
 };
 
-const INGEST_URL =
-  (import.meta.env.WXT_INGEST_URL as string | undefined)?.replace(/^['"]|['"]$/g, '') ??
-  'http://127.0.0.1:8980/api/jobs/ingest';
-
+const SERVER_URL =
+  (import.meta.env.WXT_SERVER_URL as string | undefined)?.replace(/^['"]|['"]$/g, '') ??
+  'http://127.0.0.1:8980';
+const INGEST_TAG = (import.meta.env.WXT_INGEST_TAG as string | undefined)?.replace(/^['"]|['"]$/g, '') ??
+  '/api/jobs/ingest';
+const HEALTH_TAG = (import.meta.env.HEALTH_TAG as string | undefined)?.replace(/^['"]|['"]$/g, '') ??
+  '/api/healthz';
 
 export default function App() {
   const [status, setStatus] = useState('Open a job on HiringCafe, then Get job');
   const [job, setJob] = useState<JobResult | null>(null);
   const [posting, setPosting] = useState<PostingResult | null>(null);
   const [busy, setBusy] = useState(false);
-  const [ingestUrl, setIngestUrl] = useState(INGEST_URL);
 
-  useEffect(() => {
-    browser.storage.local.get('ingestUrl').then((stored) => {
-      const value = stored.ingestUrl;
-      if (typeof value === 'string' && value.trim()) setIngestUrl(value.trim());
-    });
-  }, []);
-
-  useEffect(() => {
-    if (ingestUrl) browser.storage.local.set({ ingestUrl });
-  }, [ingestUrl]);
+  const [serverUrl, setServerUrl] = useState(SERVER_URL);
+  const [serverStatus, setServerStatus] = useState(0);
+  useEffect( () => {
+    const getHealth = async () => {
+      try {
+        setServerStatus(1) //connecting
+        const res = await fetch(serverUrl + HEALTH_TAG, {
+          method: 'GET',
+        });
+        if (!res.ok) {
+          setServerStatus(-1) //disconnect
+        }
+        setServerStatus(2) //connected
+      } catch (error) {
+        setServerStatus(0)//disconnect
+        console.error('Health check error:', error);
+      }
+    };
+    if (serverUrl) {
+      void getHealth();
+    }
+  }, [serverUrl]);
 
   async function getJob() {
     setBusy(true);
     setPosting(null);
     try {
-      const tabs = await browser.tabs.query({
-        url: ['*://hiringcafe.com/*', '*://*.hiringcafe.com/*'],
-      });
-      const tab = tabs.find((t) => t.active) ?? tabs[0];
-      if (!tab?.id) {
-        setStatus('no hiringcafe tab');
-        addAlert({ message: 'no hiringcafe tab', security: 'error' });
-        return;
+      const tab = await getTab();
+      const tabUrl = tab?.url ?? "";
+      if (tabUrl.indexOf("https://hiringcafe.com") == -1) {
+        const message= 'This page is not Hiringcafe page.'
+        setStatus(message);
+        addAlert({ message, security: 'error' });
+        return "This page is not Hiringcafe page";
       }
-
       const [injected] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: readDrawer,
@@ -79,60 +97,24 @@ export default function App() {
         return;
       }
       setJob(extracted);
-
-      const payload: Record<string, unknown> = {
-        createdBy: 'hiringcafe',
-        title: extracted.title,
-        company: {
-          name: extracted.company,
-          logo: extracted.logo,
-          tags: extracted.companyTags ?? [],
-        },
-        description: extracted.description,
-        applyLink: extracted.apply_url,
-        companyLink: extracted.companyLink ?? '',
-        postedAgo: extracted.postedAgo,
-        tags: extracted.tags ?? [],
-        skills: extracted.skills ?? [],
-        details: {
-          location: extracted.location,
-          employmentType: extracted.employmentType ?? '',
-          workplaceType: extracted.workplaceType,
-          salary: extracted.salary,
-        },
-        applicants: {
-          count: extracted.applicantsCount,
-          text: extracted.applicantsText,
-        },
-        id: extracted.id,
-        scrapeFrom: 'hiringcafe',
-      };
-
-      const res = await fetch(ingestUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const raw = await res.text();
-      let body = raw;
-      try {
-        body = JSON.stringify(JSON.parse(raw), null, 2);
-      } catch {
-        /* keep raw text */
-      }
+      const res = await postJob(serverUrl + INGEST_TAG, extracted);
+      const result = await res.json();
+      console.log(result);
+      // try {
+      //   body = JSON.stringify(JSON.parse(raw), null, 2);
+      // } catch {
+      //   /* keep raw text */
+      // }
       setPosting({
-        ok: res.ok,
-        status: res.status,
-        url: ingestUrl,
-        body: body || "(empty body)",
+        ok: true,
+        status:2,
+        body: result.success || "(empty body)",
       });
-      if (!res.ok) {
-        setStatus(`ingest failed ${res.status}`);
-        addAlert({ message: `ingest failed ${res.status}`, security: 'error' });
-        return;
-      }
-
+      // if (!res.ok) {
+      //   setStatus(`ingest failed ${res.status}`);
+      //   addAlert({ message: `ingest failed ${res.status}`, security: 'error' });
+      //   return;
+      // }
       setStatus(`ingested ${extracted.title}`);
       addAlert({ message: `ingested ${extracted.title}`, security: 'success' });
     } catch (err) {
@@ -140,7 +122,6 @@ export default function App() {
       setPosting({
         ok: false,
         status: 0,
-        url: ingestUrl,
         body: message,
       });
       setStatus(message);
@@ -174,26 +155,33 @@ export default function App() {
             {busy ? 'Working…' : 'Get job'}
           </Button>
           <TextField
-            label="Ingest URL"
+            label="Server URL"
             size="small"
             fullWidth
-            value={ingestUrl}
-            onChange={(e) => setIngestUrl(e.target.value)}
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
             disabled={busy}
+            helperText={server_status(serverStatus)}
+            slotProps={{ formHelperText: { sx: { color: server_status_color(serverStatus) } } }}
           />
           <Typography variant="body2" color="text.secondary">
             {status}
           </Typography>
-          {/* {posting && (
+          {job?.logo ? (
+                <Box
+                  component="img"
+                  src={job.logo}
+                  alt={job.company || ''}
+                  sx={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 1 }}
+                />
+              ) : null}
+          {posting && (
             <>
               <Divider />
               <Typography variant="subtitle2">Posting result</Typography>
               <Alert severity={posting.ok ? "success" : "error"}>
                 {posting.ok ? "Posted" : "Post failed"} · HTTP {posting.status}
               </Alert>
-              <Typography variant="caption" sx={{ wordBreak: "break-all" }}>
-                {posting.url}
-              </Typography>
               <Paper variant="outlined" sx={{ p: 1, maxHeight: 220, overflow: "auto" }}>
                 <Typography
                   component="pre"
@@ -204,7 +192,11 @@ export default function App() {
                 </Typography>
               </Paper>
             </>
-          )} */}
+          )}
+          <Divider />
+          <List dense>
+              <JobField fill={'zero'} text={'text'} desc={'ses'} />
+          </List>
           {/* {job?.ok && (
             <>
               <Divider />
@@ -239,5 +231,27 @@ export default function App() {
         </Stack>
       </Box>
     </ThemeProvider>
+  );
+}
+interface JobFieldProps {
+  fill: string;
+  text: string;
+  desc: string;
+}
+
+function JobField({ fill,  text, desc }: JobFieldProps) {
+  return (
+    <ListItem disablePadding>
+      <ListItemIcon>
+        {fill==='exist'&&
+          <CheckCircle color="success" />
+        }
+        {fill==='zero'&&
+          <RadioButtonUnchecked color="disabled" />
+        }
+      </ListItemIcon>
+
+      <ListItemText primary={text} secondary={desc} />
+    </ListItem>
   );
 }
