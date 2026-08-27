@@ -1,6 +1,6 @@
 {
-  "name": "wxt-react-starter",
-  "description": "manifest.json description",
+  "name": "hiringcafe-collector",
+  "description": "HiringCafe sidepanel job collector",
   "private": true,
   "version": "0.0.0",
   "type": "module",
